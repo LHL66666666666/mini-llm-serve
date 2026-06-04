@@ -18,7 +18,10 @@ held-out 必须与训练语料不重叠(这里约定单独一个文件)。
         --train-corpus data/tok_train.txt \
         --heldout data/tok_heldout.txt \
         --sizes 4096 8192 16384 32768 \
-        --out experiments/tokenizer
+        --out experiments/tokenizer \
+        --compare-external gpt2 cl100k_base
+用法:
+    python -m experiment.tokenizer_sweep --train-corpus D:/FineWeb-edu_data/tokenizer_train.txt --heldout D:/FineWeb-edu_data/tokenizer_heldout.txt --sizes 2048 4096 --out experiments/tokenizer --compare-external gpt2
 """
 
 import os
@@ -30,9 +33,34 @@ import argparse
 #                   "<|fim_suffix|>", "<|endofprompt|>"]
 SPECIAL_TOKENS = ["<|endoftext|>"]
 
+# 添加外部tokenizer对比支持
+class TiktokenTokenizer:
+    """ 将 tiktoken 的 Encoding 对象包装成与本项目 Tokenizer 兼容的接口 """
+    def __init__(self, encoding):
+        self.encoding = encoding
+
+    def encode(self, text):
+        return self.encoding.encode(text, disallowed_special=())
+
+    def decode(self, ids):
+        return self.encoding.decode(ids)
+
+    @property
+    def vocab_size(self):
+        return self.encoding.n_vocab
+
+    @property
+    def vocab(self):
+        # tiktoken 不直接提供 vocab dict，但 compute_metrics 会通过 decode_single_token_bytes 获取字节长度
+        return None
+
+    def decode_single_token_bytes(self, tok_id):
+        """ 提供单个 token 的字节解码，用于计算 token 长度 """
+        return self.encoding.decode_single_token_bytes(tok_id)
+
 
 def run_sweep(train_corpus, heldout_path, sizes, out_root,
-              num_chunks=32, num_processes=8):
+              num_chunks=32, num_processes=8, compare_external=None):
     from train_tokenizer import train_tokenizer
     from tokenizer import Tokenizer
     from experiment.tokenizer_eval import evaluate_tokenizer
@@ -54,17 +82,32 @@ def run_sweep(train_corpus, heldout_path, sizes, out_root,
             tokenizer = Tokenizer.load(tok_path)
         else:
             print(f"[sweep] training {name} (vocab_size={vs}) ...")
-            vocab, merges, special_map, pattern = train_tokenizer(
+            vocab, merges, special_map, pattern, train_stats = train_tokenizer(
                 filepath=train_corpus, vocab_size=vs, special_tokens=SPECIAL_TOKENS,
                 num_chunks=num_chunks, num_processes=num_processes,
             )
             tokenizer = Tokenizer(vocab=vocab, merge=merges,
                                   special_tokens=special_map, pattern=pattern)
             tokenizer.save(tok_path)
+            # 写入训练数据
+            stats_path = os.path.join(out_dir, "train_stats.json")
+            with open(stats_path, "w", encoding="utf-8") as f:
+                json.dump(train_stats, f, ensure_ascii=False, indent=2)
 
         m = evaluate_tokenizer(tokenizer, heldout_text, out_dir, declared_name=name)
         rows.append(m)
         hist_data[name] = m["length_hist"]
+
+    # 加入tokenizer对比支持
+    if compare_external:
+        import tiktoken
+        for enc_name in compare_external:
+            enc = tiktoken.get_encoding(enc_name)
+            tokenizer = TiktokenTokenizer(enc)
+            out_dir = os.path.join(out_root, f"tiktoken_{enc_name}")
+            m = evaluate_tokenizer(tokenizer, heldout_text, out_dir, declared_name=f"tiktoken-{enc_name}")
+            rows.append(m)
+            hist_data[f"tiktoken-{enc_name}"] = m["length_hist"]
 
     _write_comparison(rows, out_root)
     _plot_hist(hist_data, out_root)
@@ -100,9 +143,9 @@ def _plot_hist(hist_data, out_root):
         xs = sorted(int(k) for k in hist)
         ys = [hist[str(k)] for k in xs]
         plt.plot(xs, ys, marker="o", ms=3, label=name)
-    plt.xlabel("token 字节长度")
-    plt.ylabel("占比")
-    plt.title("Token 长度分布 by vocab_size")
+    plt.xlabel("Token byte length")
+    plt.ylabel("Ratio")
+    plt.title("Token length distribution by vocab_size")
     plt.legend()
     plt.tight_layout()
     p = os.path.join(out_root, "length_hist.png")
@@ -121,9 +164,13 @@ def main():
                     help="训练 BPE 时的文件分块数（语料越小需要设越小）")
     ap.add_argument("--num-processes", type=int, default=8,
                     help="并行进程数")
+    # run_sweep 中加入外部tokenizer评估
+    ap.add_argument("--compare-external", nargs="+", default=[],
+                    help="tiktoken encodings to compare, e.g. gpt2 cl100k_base")
     args = ap.parse_args()
     run_sweep(args.train_corpus, args.heldout, args.sizes, args.out,
-              num_chunks=args.num_chunks, num_processes=args.num_processes)
+              num_chunks=args.num_chunks, num_processes=args.num_processes,
+              compare_external=args.compare_external)
 
 
 if __name__ == "__main__":

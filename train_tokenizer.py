@@ -8,6 +8,12 @@ import regex as re
 # 多进程
 import multiprocessing
 from multiprocessing import Pool, cpu_count
+# 可选内存监控支持
+try:
+    import psutil
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -149,7 +155,7 @@ def train_bbpe(
     num_chunks: int = 8,
     num_processes: int = None,
     **kwargs,
-) -> tuple[dict[int, bytes], dict[tuple[int, int], int], dict[str, int]]:
+) -> tuple[dict[int, bytes], dict[tuple[int, int], int], dict[str, int], dict]:
     # -------------------预分词阶段-------------------------
     # 计时开始：before_pretokenization_time 用于记录预分词之前的准备工作耗时
     before_pretokenization_time = time.time()
@@ -218,7 +224,7 @@ def train_bbpe(
     # 改进为并行
     # 确定使用的进程数
     if num_processes is None:
-        num_processes = min(cpu_count(), 8)  # 避免 Windows 上创建过多进程
+        num_processes = min(cpu_count(), 8)  # 避免创建过多进程
     processes_to_use = min(num_processes, len(chunk_args))
     # 打印信息
     before_pretokenization_time = time.time() - before_pretokenization_time
@@ -246,6 +252,8 @@ def train_bbpe(
             all_word_freqs.update(chunk_counter)
     end_time = time.time()
     print(f"Pre-tokenization and initial counting time: {end_time - start_time:.2f} seconds")
+    # 记录观测指标：预分词时间
+    pretokenize_duration = end_time - start_time
 
 
 
@@ -288,11 +296,25 @@ def train_bbpe(
     # 合并
     num_merges = vocab_size - len(vocab)
     pbar = tqdm(total=num_merges, desc="Performing BPE merges")
+
+    # 记录观测指标：merge开始时的unique pair数量，heap大小
+    initial_pair_count = len(pair_freqs)  # merge开始时的unique pair数量
+    initial_heap_size = len(pq)  # 初始堆大小
+    # 记录观测指标：最大堆大小和内存峰值
+    max_heap_size = len(pq)
+    peak_memory_mb = None
+    if _HAS_PSUTIL:
+        process = psutil.Process()
+        # 记录初始内存
+        peak_memory_mb = process.memory_info().rss / 1024 / 1024
+
     start_time = time.time()
 
     merges = {}
 
     for _ in range(num_merges):
+        # 更新最大堆大小
+        max_heap_size = max(max_heap_size, len(pq))
         top_pair = None
         while len(pq) > 0:
             # 优先队列中可能存在过期元素，过期元素跳过
@@ -307,6 +329,12 @@ def train_bbpe(
         # 无可合并pair
         if not top_pair:
             break
+
+        # 每1000步采样一次内存
+        if _HAS_PSUTIL and _ % 1000 == 0:
+            mem = process.memory_info().rss / 1024 / 1024
+            if mem > peak_memory_mb:
+                peak_memory_mb = mem
 
         p0, p1 = top_pair
         new_token_id = len(vocab)
@@ -401,9 +429,29 @@ def train_bbpe(
 
     end_time = time.time()
     print(f"Merge time: {end_time - start_time:.2f} seconds")
+    merge_duration = end_time - start_time
+    final_pair_count = len(pair_freqs)
+    final_heap_size = len(pq)
+    # 最后采样一次内存
+    if _HAS_PSUTIL:
+        mem = process.memory_info().rss / 1024 / 1024
+        if mem > peak_memory_mb:
+            peak_memory_mb = mem
+    # 构建stats字典
+    stats = {
+        "pretokenize_time_sec": round(pretokenize_duration, 2),
+        "merge_time_sec": round(merge_duration, 2),
+        "total_time_sec": round(pretokenize_duration + merge_duration, 2),
+        "initial_pair_count": initial_pair_count,
+        "final_pair_count": final_pair_count,
+        "initial_heap_size": initial_heap_size,
+        "max_heap_size": max_heap_size,
+        "final_heap_size": final_heap_size,
+        "peak_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
+    }
 
     pbar.close()
-    return vocab, merges, special_token_to_id
+    return vocab, merges, special_token_to_id, stats
 
 
 def train_tokenizer(
@@ -417,7 +465,7 @@ def train_tokenizer(
     GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
     PATTERN_CHOSEN = GPT4_SPLIT_PATTERN
     PAT_COMPILED = re.compile(PATTERN_CHOSEN)
-    vocab, merges, special_token_to_id = train_bbpe(
+    vocab, merges, special_token_to_id, stats = train_bbpe(
         input_path=filepath,
         vocab_size=vocab_size,
         special_tokens=special_tokens,
@@ -425,13 +473,13 @@ def train_tokenizer(
         num_chunks=num_chunks,
         num_processes=num_processes,
     )
-    return vocab, merges, special_token_to_id, PATTERN_CHOSEN
+    return vocab, merges, special_token_to_id, PATTERN_CHOSEN, stats
 
 if __name__ == "__main__":
     # cl100k_base : ["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>", "<|fim_suffix|>", "<|endofprompt|>"]
     special_tokens = ["<|endoftext|>", "<|fim_prefix|>", "<|fim_middle|>", "<|fim_suffix|>", "<|endofprompt|>"]
-    vocab, merges, special_token_to_id, PATTERN_CHOSEN = (
-        train_tokenizer(filepath="data/TinyStoriesV2-GPT4-train.txt", vocab_size=50304, special_tokens=special_tokens)
+    vocab, merges, special_token_to_id, PATTERN_CHOSEN, stats = (
+        train_tokenizer(filepath="D:/FineWeb-edu_data/tokenizer_heldout.txt", vocab_size=50304, special_tokens=special_tokens)
     )
     from tokenizer import Tokenizer
     tokenizer = Tokenizer(

@@ -1,0 +1,51 @@
+run_name: gpt_tiny_baseline
+out_root: experiments/training
+notes: "GPT baseline，tiny 规模测试用，跑通流程"
+use_tensorboard: false
+use_wandb: true
+wandb_project: mini_LLM_inference_system
+
+# 模型结构（交给 nano_GPT.GPTConfig）
+model:
+  max_seq_len: 256
+  vocab_size: 50304
+  n_layer: 4
+  n_head: 4
+  hidden_size: 256
+  dropout: 0.0
+
+data:
+  filepath: fineweb_edu_q3_20M.jsonl
+  tokenizer: gpt2          # 后续做 vocab 实验时改成自研 tokenizer.json 路径
+  block_size: 256
+  val_ratio: 0.05
+  cache_dir: data/cache
+  num_workers: 0
+
+optim:
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  weight_decay: 1.0e-2
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  warmup_steps: 100
+  lr_decay_steps: null      # null -> 自动 = max_steps
+
+train:
+  arch: gpt
+  micro_batch_size: 8
+  global_batch_size: 32
+  max_steps: 100           # 正式训练时按数据量/算力调大
+  max_tokens: null          # 或改用 token 预算停止
+  dtype: bfloat16
+  device: auto
+  seed: 42
+  log_interval: 50
+  val_interval: 100
+  ckpt_interval: 500
+  sample_interval: 500
+  sample_prompts: ["The", "Once upon a time", "In the year 2050"]
+  sample_max_new_tokens: 100
+  sample_temperature: 1.0
+  sample_top_k: 50

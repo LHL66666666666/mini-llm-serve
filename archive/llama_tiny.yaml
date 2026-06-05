@@ -17,7 +17,7 @@ model:
   max_position_embeddings: 2048
 
 data:
-  filepath: fineweb_edu_q3_20M.jsonl
+  filepath: D:/pytorch_llm_learning/neural_network_zero_to_hero/fineweb_edu_q3_20M.jsonl
   tokenizer: gpt2          # 后续做 vocab 实验时改成自研 tokenizer.json 路径
   block_size: 256
   val_ratio: 0.05
@@ -47,7 +47,16 @@ train:
   val_interval: 100
   ckpt_interval: 500
   sample_interval: 500
-  sample_prompts: ["The", "Once upon a time", "In the year 2050"]
+  sample_prompts: [
+    "Machine learning is",
+    "The theory of evolution",
+    "In mathematics,",
+    "According to research,",
+    "The history of",
+    "Climate change is",
+    "One important advantage of",
+    "Recent studies suggest that",
+  ]
   sample_max_new_tokens: 100
   sample_temperature: 1.0
   sample_top_k: 50

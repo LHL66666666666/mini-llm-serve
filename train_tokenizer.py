@@ -330,6 +330,11 @@ def train_bbpe(
         if not top_pair:
             break
 
+        # 训练时监控 pair 的数量和堆的大小
+        if _ % 1000 == 0:
+            print(f"\nmerge {_}: unique pairs in pair_freqs: {len(pair_freqs)}, heap size: {len(pq)}")
+
+
         # 每1000步采样一次内存
         if _HAS_PSUTIL and _ % 1000 == 0:
             mem = process.memory_info().rss / 1024 / 1024

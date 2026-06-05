@@ -1,39 +1,37 @@
-run_name: gpt_tiny_baseline
+run_name: llama_layernorm
 out_root: experiments/training
-notes: "GPT baseline，tiny 规模测试用，跑通流程"
+notes: 消融:LLaMA 基线把 RMSNorm 换成 LayerNorm
 use_tensorboard: false
 use_wandb: true
 wandb_project: mini_LLM_inference_system
-
-# 模型结构（交给 nano_GPT.GPTConfig）
 model:
+  preset: llama_layernorm
   max_seq_len: 256
   vocab_size: 50304
   n_layer: 4
   n_head: 4
   hidden_size: 256
+  max_position_embeddings: 2048
   dropout: 0.0
-
+  bias: false
 data:
-  filepath: fineweb_edu_q3_20M.jsonl
-  tokenizer: gpt2          # 后续做 vocab 实验时改成自研 tokenizer.json 路径
+  filepath: D:/pytorch_llm_learning/neural_network_zero_to_hero/fineweb_edu_q3_20M.jsonl
+  tokenizer: gpt2         # 后续做 vocab 实验时改成自研 tokenizer.json 路径
   block_size: 256
   val_ratio: 0.05
   cache_dir: data/cache
   num_workers: 0
-
 optim:
-  lr: 3.0e-4
-  min_lr: 3.0e-5
-  weight_decay: 1.0e-2
+  lr: 0.0003
+  min_lr: 3.0e-05
+  weight_decay: 0.01
   beta1: 0.9
   beta2: 0.95
   grad_clip: 1.0
   warmup_steps: 100
-  lr_decay_steps: null      # null -> 自动 = max_steps
-
+  lr_decay_steps: null    # null -> 自动 = max_steps
 train:
-  arch: gpt
+  arch: unified
   micro_batch_size: 8
   global_batch_size: 32
   max_steps: 100           # 正式训练时按数据量/算力调大
@@ -45,7 +43,16 @@ train:
   val_interval: 100
   ckpt_interval: 500
   sample_interval: 500
-  sample_prompts: ["The", "Once upon a time", "In the year 2050"]
+  sample_prompts: [
+    "Machine learning is",
+    "The theory of evolution",
+    "In mathematics,",
+    "According to research,",
+    "The history of",
+    "Climate change is",
+    "One important advantage of",
+    "Recent studies suggest that",
+  ]
   sample_max_new_tokens: 100
   sample_temperature: 1.0
   sample_top_k: 50

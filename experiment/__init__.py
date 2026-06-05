@@ -30,3 +30,6 @@ __all__ = [
     "parse_args_and_load",
     "RunManager",
 ]
+
+from experiment.model_spec import resolve_model_cfg, count_params, PRESETS, UNIFIED_DEFAULTS
+from experiment.model_build import build_model, audit_params, audit_one

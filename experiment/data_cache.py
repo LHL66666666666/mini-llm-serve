@@ -88,6 +88,7 @@ def load_or_build_token_cache(
     declared_name: str = "tokenizer",
     add_eos: bool = True,
     text_field: str = "text",
+    flush_tokens: int = 2_000_000,
 ) -> np.ndarray:
     """返回一维 token 数组(memmap,只读)。命中缓存则秒回,否则编码并落盘。"""
     os.makedirs(cache_dir, exist_ok=True)
@@ -104,44 +105,62 @@ def load_or_build_token_cache(
         print(f"[cache] HIT {bin_path} ({meta['n_tokens']/1e6:.2f}M tokens, dtype={meta['dtype']})")
         return np.memmap(bin_path, dtype=np.dtype(meta["dtype"]), mode="r")
 
-    # 未命中:编码
+    # 未命中:流式编码并分块写盘
+    # 关键:不再把整文件 token 堆成一个 Python list(2000万 token 的 list ~500MB+,
+    # 多 shard 会 OOM)。改为每攒够 flush_tokens 就转 numpy 写一次盘,内存上限恒定。
     print(f"[cache] MISS -> encoding {filepath} with {fp.get('kind')} (vocab_size={vocab_size})")
     t0 = time.time()
-    all_tokens = []
+    dtype_max = int(np.iinfo(dtype).max)
+    n_tokens = 0
     max_id_seen = 0
     n_docs = 0
-    with open(filepath, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            data = json.loads(line)
-            text = data.get(text_field, "")
-            if not text:
-                continue
-            ids = tokenizer.encode(text)
-            all_tokens.extend(ids)
-            if add_eos:
-                all_tokens.append(eos_token_id)
-            if ids:
-                m = max(max(ids), eos_token_id if add_eos else 0)
-                if m > max_id_seen:
-                    max_id_seen = m
-            n_docs += 1
+    buf = []  # 临时 token 缓冲,定期 flush
 
-    # 溢出校验:绝不静默回绕
-    if max_id_seen >= np.iinfo(dtype).max:
-        raise ValueError(
-            f"max token id {max_id_seen} 超出 dtype {dtype.__name__} 上限 "
-            f"{np.iinfo(dtype).max};请提高 vocab_size 对应的 dtype。"
-        )
-
-    arr = np.array(all_tokens, dtype=dtype)
-    # 原子写:先写临时文件再 rename,避免中断留下半截缓存
     tmp = bin_path + ".tmp"
-    arr.tofile(tmp)
-    os.replace(tmp, bin_path)
+    try:
+        with open(filepath, "r", encoding="utf-8") as fin, open(tmp, "wb") as fout:
+            def flush():
+                nonlocal buf, max_id_seen, n_tokens
+                if not buf:
+                    return
+                chunk_max = max(buf)
+                if chunk_max > max_id_seen:
+                    max_id_seen = chunk_max
+                # 溢出校验:绝不静默回绕(写盘前拦下)
+                if chunk_max >= dtype_max:
+                    raise ValueError(
+                        f"max token id {chunk_max} 超出 dtype {dtype.__name__} 上限 "
+                        f"{dtype_max};请提高 vocab_size 对应的 dtype。"
+                    )
+                arr = np.asarray(buf, dtype=dtype)
+                arr.tofile(fout)  # 追加写到当前文件位置
+                n_tokens += arr.size
+                buf = []
+
+            for line in fin:
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                text = data.get(text_field, "")
+                if not text:
+                    continue
+                ids = tokenizer.encode(text)
+                buf.extend(ids)
+                if add_eos:
+                    buf.append(eos_token_id)
+                n_docs += 1
+                if len(buf) >= flush_tokens:
+                    flush()
+            flush()  # 收尾
+        os.replace(tmp, bin_path)  # 原子替换,避免中断留下半截缓存
+    except BaseException:
+        # 失败时清理临时文件,不污染缓存目录
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
     meta = {
-        "n_tokens": int(arr.size),
+        "n_tokens": int(n_tokens),
         "n_docs": n_docs,
         "dtype": np.dtype(dtype).name,
         "max_id_seen": int(max_id_seen),
@@ -153,6 +172,6 @@ def load_or_build_token_cache(
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-    print(f"[cache] built {bin_path} ({arr.size/1e6:.2f}M tokens, dtype={meta['dtype']}, "
+    print(f"[cache] built {bin_path} ({n_tokens / 1e6:.2f}M tokens, dtype={meta['dtype']}, "
           f"{meta['encode_seconds']}s)")
     return np.memmap(bin_path, dtype=dtype, mode="r")

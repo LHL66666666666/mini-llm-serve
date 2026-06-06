@@ -19,7 +19,11 @@ import yaml
 
 @dataclass
 class DataConfig:
-    filepath: str = "fineweb_edu_q3_20M.jsonl"
+    filepath: str = "fineweb_edu_q3_20M.jsonl"              # 向后兼容:单文件;若 train_files 非空则忽略
+    train_files: List[str] = field(default_factory=list)    # 多 shard 显式列表(按此顺序读)
+    val_files: List[str] = field(default_factory=list)      # 可选:独立验证文件;为空则从 val_shard 切
+    val_shard_index: int = -1           # 从哪个训练 shard 末尾切 val(默认 -1 = 最后一个)
+    shuffle: bool = False               # 默认顺序读(读完一个 shard 再下一个);True=全局打乱
     tokenizer: str = "gpt2"            # "gpt2" 或自研 tokenizer.json 的路径
     block_size: int = 256             # 序列长度 T
     val_ratio: float = 0.05
@@ -44,7 +48,7 @@ class TrainConfig:
     arch: str = "gpt"                 # "gpt" | "llama"
     micro_batch_size: int = 8         # 单次前向的 batch(受显存限制)
     global_batch_size: int = 32       # 梯度累积后的有效 batch(序列数);必须能被 micro 整除
-    max_steps: int = 1000             # 以 optimizer.step 计
+    max_steps: Optional[int] = None             # 以 optimizer.step 计;留空则由 max_tokens 反推
     max_tokens: Optional[int] = None  # 可选:按 token 预算停止(设了就覆盖 max_steps 作为停止条件)
     dtype: str = "bfloat16"
     device: str = "auto"
@@ -87,7 +91,6 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
-    tokenizer_train: Optional[TokenizerTrainConfig] = None # 后续 tokenizer 实验也能用同一套配置框架
 
 
 

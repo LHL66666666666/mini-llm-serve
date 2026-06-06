@@ -11,11 +11,17 @@ model:
   n_layer: 4
   n_head: 4
   hidden_size: 256
-  max_position_embeddings: 2048
+  max_position_embeddings: 256
   dropout: 0.0
   bias: false
 data:
-  filepath: D:/pytorch_llm_learning/neural_network_zero_to_hero/fineweb_edu_q3_20M.jsonl
+  filepath: ''
+  train_files:
+    - D:/pytorch_llm_learning/neural_network_zero_to_hero/fineweb_edu_q3_20M.jsonl
+    - D:/FineWeb-edu_data/pretrain_shard_00007.jsonl
+  val_files: []
+  val_shard_index: -1               # 从最后一个 shard 尾部切 val
+  shuffle: false                    # 是否全局打乱
   tokenizer: gpt2         # 后续做 vocab 实验时改成自研 tokenizer.json 路径
   block_size: 256
   val_ratio: 0.05
@@ -34,8 +40,8 @@ train:
   arch: unified
   micro_batch_size: 8
   global_batch_size: 32
-  max_steps: 100           # 正式训练时按数据量/算力调大
-  max_tokens: null          # 或改用 token 预算停止
+  max_steps: null                 # 按照训练步数停止
+  max_tokens: 200000          # 用 token 预算停止
   dtype: bfloat16
   device: auto
   seed: 42

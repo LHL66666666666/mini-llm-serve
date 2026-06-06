@@ -61,20 +61,26 @@ def train(cfg, generator: torch.Generator):
         eos_token_id = tokenizer.special_tokens["<|endoftext|>"]
 
     t0 = time.time()
+    # 解析训练文件列表:优先 train_files,否则回退单文件 filepath
+    files = list(cfg.data.train_files) if cfg.data.train_files else [cfg.data.filepath]
+    print(f"[data] count: {len(files)} , shard(shuffle{', True' if cfg.data.shuffle else ', False'})")
     train_loader, val_loader = create_train_val_dataloaders(
-        filepath=cfg.data.filepath,
         tokenizer=tokenizer,
         eos_token_id=eos_token_id,
         vocab_size=vocab_size,
-        tokenizer_name=cfg.data.tokenizer,
         generator=generator,
-        cache_dir=cfg.data.cache_dir,
-        block_size=block_size,
+        files=files,
+        val_files=list(cfg.data.val_files) if cfg.data.val_files else None,
         val_ratio=cfg.data.val_ratio,
+        val_shard_index=cfg.data.val_shard_index,
+        shuffle=cfg.data.shuffle,
+        cache_dir=cfg.data.cache_dir,
+        tokenizer_name=cfg.data.tokenizer,
+        block_size=block_size,
         batch_size=batch_size,
         num_workers=cfg.data.num_workers,
     )
-    print(f"train loader: {len(train_loader)}, val loader: {len(val_loader)}")
+    print(f"train samples: {len(train_loader.dataset):,}, val samples: {len(val_loader.dataset):,}")
     print(f"data ready in {time.time() - t0:.2f}s")
 
     device = torch.device("cuda" if (cfg.train.device in ("auto", "cuda") and torch.cuda.is_available()) else "cpu")
@@ -91,10 +97,18 @@ def train(cfg, generator: torch.Generator):
 
     accumulation_steps = cfg.train.global_batch_size // cfg.train.micro_batch_size
     assert cfg.train.global_batch_size % cfg.train.micro_batch_size == 0
-    lr_decay_steps = cfg.optim.lr_decay_steps or cfg.train.max_steps
-    max_steps = cfg.train.max_steps
-    max_tokens = cfg.train.max_tokens
     tokens_per_step = cfg.train.global_batch_size * block_size
+    max_tokens = cfg.train.max_tokens
+
+    # 停止步数:max_steps 为空则由 token 预算反推
+    max_steps = cfg.train.max_steps
+    if max_steps is None:
+        if max_tokens is None:
+            raise ValueError("both max_steps and max_tokens are empty")
+        max_steps = math.ceil(max_tokens / tokens_per_step)
+        print(f"[train] max_steps not set, max_tokens={max_tokens/1e6:.1f}M -> {max_steps} steps")
+    # 余弦调度终点默认对齐到 max_steps
+    lr_decay_steps = cfg.optim.lr_decay_steps or max_steps
 
     optimizer.zero_grad()
     global_step = 0

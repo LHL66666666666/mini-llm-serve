@@ -9,7 +9,7 @@
     python train.py --config configs/unified_llama.yaml run_name=llama_base train.max_steps=20000
     python train.py --config configs/llama_gelu.yaml      # 单变量消融
 """
-
+import os
 import time
 import math
 import random
@@ -86,6 +86,16 @@ def train(cfg, generator: torch.Generator):
     device = torch.device("cuda" if (cfg.train.device in ("auto", "cuda") and torch.cuda.is_available()) else "cpu")
 
     model = build_model(cfg).to(device)
+
+    # ---- torch.compile ----
+    if cfg.train.use_compile and hasattr(torch, "compile"):
+        print("[compile] applying torch.compile (mode='reduce-overhead')")
+        model = torch.compile(model)
+    elif cfg.train.use_compile:
+        print("[compile] torch.compile not available (torch<2.0), skipping")
+    else:
+        print("[compile] disabled by config")
+
     loss_fn = torch.nn.CrossEntropyLoss()
 
     optimizer = model.configure_optimizers(
@@ -219,3 +229,5 @@ if __name__ == "__main__":
     g.manual_seed(cfg.train.seed)
     print(f"seed: {cfg.train.seed}")
     train(cfg, g)
+    # 训练完成后自动关机
+    os.system("/usr/bin/shutdown")

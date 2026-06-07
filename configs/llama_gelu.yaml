@@ -1,4 +1,4 @@
-run_name: llama_gelu
+run_name: llama_gelu_124M
 out_root: experiments/training
 notes: 消融:LLaMA 基线把 SwiGLU 换成 GELU(注意:非等参,blocks 差~8%)
 use_tensorboard: false
@@ -6,42 +6,55 @@ use_wandb: true
 wandb_project: mini_LLM_inference_system
 model:
   preset: llama_gelu
-  max_seq_len: 256
+  max_seq_len: 1024
   vocab_size: 50304
-  n_layer: 4
-  n_head: 4
-  hidden_size: 256
-  max_position_embeddings: 2048
+  n_layer: 12
+  n_head: 12
+  hidden_size: 768
+  max_position_embeddings: 1024
   dropout: 0.0
   bias: false
 data:
-  filepath: D:/pytorch_llm_learning/neural_network_zero_to_hero/fineweb_edu_q3_20M.jsonl
+  filepath: ''
+  train_files:
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00000.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00001.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00002.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00003.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00004.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00005.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00006.jsonl
+    - /root/autodl-tmp/FineWeb_edu_data/pretrain_shard_00007.jsonl
+  val_files: []
+  val_shard_index: -1               # 从最后一个 shard 尾部切 val
+  shuffle: false                    # 是否全局打乱
   tokenizer: gpt2         # 后续做 vocab 实验时改成自研 tokenizer.json 路径
-  block_size: 256
+  block_size: 1024
   val_ratio: 0.05
   cache_dir: data/cache
   num_workers: 0
 optim:
-  lr: 0.0003
-  min_lr: 3.0e-05
+  lr: 0.0006
+  min_lr: 6.0e-05
   weight_decay: 0.01
   beta1: 0.9
   beta2: 0.95
   grad_clip: 1.0
-  warmup_steps: 100
+  warmup_steps: 480
   lr_decay_steps: null    # null -> 自动 = max_steps
 train:
   arch: unified
-  micro_batch_size: 8
-  global_batch_size: 32
-  max_steps: 100           # 正式训练时按数据量/算力调大
-  max_tokens: null          # 或改用 token 预算停止
+  use_compile: true
+  micro_batch_size: 16
+  global_batch_size: 256
+  max_steps: null                 # 按照训练步数停止
+  max_tokens: 2_500_000_000          # 用 token 预算停止
   dtype: bfloat16
   device: auto
   seed: 42
   log_interval: 50
   val_interval: 100
-  ckpt_interval: 500
+  ckpt_interval: 1000000            # 远远大于 max_steps，永远不会触发周期性保存(防止磁盘空间不足)
   sample_interval: 500
   sample_prompts: [
     "Machine learning is",

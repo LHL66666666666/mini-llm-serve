@@ -46,6 +46,7 @@ class OptimConfig:
 @dataclass
 class TrainConfig:
     arch: str = "gpt"                 # "gpt" | "llama"
+    use_compile: bool = True          # 默认开启 torch.compile
     micro_batch_size: int = 8         # 单次前向的 batch(受显存限制)
     global_batch_size: int = 32       # 梯度累积后的有效 batch(序列数);必须能被 micro 整除
     max_steps: Optional[int] = None             # 以 optimizer.step 计;留空则由 max_tokens 反推
